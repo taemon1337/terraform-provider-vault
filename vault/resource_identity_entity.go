@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-provider-vault/util"
 	"github.com/hashicorp/vault/api"
-	"github.com/terraform-providers/terraform-provider-vault/util"
 )
 
 const identityEntityPath = "/identity/entity"
@@ -67,23 +67,39 @@ func identityEntityResource() *schema.Resource {
 	}
 }
 
-func identityEntityUpdateFields(d *schema.ResourceData, data map[string]interface{}) {
-	if name, ok := d.GetOk("name"); ok {
-		data["name"] = name
-	}
-
-	if externalPolicies, ok := d.GetOk("external_policies"); !(ok && externalPolicies.(bool)) {
-		if policies, ok := d.GetOk("policies"); ok {
-			data["policies"] = policies.(*schema.Set).List()
+func identityEntityUpdateFields(d *schema.ResourceData, data map[string]interface{}, create bool) {
+	if create {
+		if name, ok := d.GetOk("name"); ok {
+			data["name"] = name
 		}
-	}
 
-	if metadata, ok := d.GetOk("metadata"); ok {
-		data["metadata"] = metadata
-	}
+		if externalPolicies, ok := d.GetOk("external_policies"); !(ok && externalPolicies.(bool)) {
+			if policies, ok := d.GetOk("policies"); ok {
+				data["policies"] = policies.(*schema.Set).List()
+			}
+		}
 
-	if disabled, ok := d.GetOk("disabled"); ok {
-		data["disabled"] = disabled
+		if metadata, ok := d.GetOk("metadata"); ok {
+			data["metadata"] = metadata
+		}
+
+		if disabled, ok := d.GetOk("disabled"); ok {
+			data["disabled"] = disabled
+		}
+	} else {
+		if d.HasChanges("name", "external_policies", "policies", "metadata", "disabled") {
+			data["name"] = d.Get("name")
+			data["metadata"] = d.Get("metadata")
+			data["disabled"] = d.Get("disabled")
+			data["policies"] = d.Get("policies").(*schema.Set).List()
+
+			// Edge case where if external_policies is true, no policies
+			// should be configured on the entity.
+			data["external_policies"] = d.Get("external_policies").(bool)
+			if data["external_policies"].(bool) {
+				data["policies"] = nil
+			}
+		}
 	}
 }
 
@@ -98,14 +114,26 @@ func identityEntityCreate(d *schema.ResourceData, meta interface{}) error {
 		"name": name,
 	}
 
-	identityEntityUpdateFields(d, data)
+	identityEntityUpdateFields(d, data, true)
 
 	resp, err := client.Logical().Write(path, data)
 
 	if err != nil {
 		return fmt.Errorf("error writing IdentityEntity to %q: %s", name, err)
 	}
-	log.Printf("[DEBUG] Wrote IdentityEntity %q", name)
+
+	if resp == nil {
+		path := identityEntityNamePath(name)
+		entityMsg := "Unable to determine entity id."
+
+		if entity, err := client.Logical().Read(path); err == nil {
+			entityMsg = fmt.Sprintf("Entity resource ID %q may be imported.", entity.Data["id"])
+		}
+
+		return fmt.Errorf("Identity Entity %q already exists. %s", name, entityMsg)
+	} else {
+		log.Printf("[DEBUG] Wrote IdentityEntity %q", name)
+	}
 
 	d.SetId(resp.Data["id"].(string))
 
@@ -124,7 +152,7 @@ func identityEntityUpdate(d *schema.ResourceData, meta interface{}) error {
 
 	data := map[string]interface{}{}
 
-	identityEntityUpdateFields(d, data)
+	identityEntityUpdateFields(d, data, false)
 
 	_, err := client.Logical().Write(path, data)
 

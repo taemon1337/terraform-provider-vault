@@ -1,17 +1,22 @@
 package vault
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/hashicorp/vault/api"
 )
 
 func jwtAuthBackendResource() *schema.Resource {
 	return &schema.Resource{
+		Importer: &schema.ResourceImporter{
+			State: schema.ImportStatePassthrough,
+		},
 		Create: jwtAuthBackendWrite,
 		Delete: jwtAuthBackendDelete,
 		Read:   jwtAuthBackendRead,
@@ -118,16 +123,32 @@ func jwtAuthBackendResource() *schema.Resource {
 				Computed:    true,
 				Description: "The accessor of the JWT auth backend",
 			},
+			"local": {
+				Type:        schema.TypeBool,
+				ForceNew:    true,
+				Optional:    true,
+				Default:     false,
+				Description: "Specifies if the auth method is local only",
+			},
+			"provider_config": {
+				Type:        schema.TypeMap,
+				Optional:    true,
+				Description: "Provider specific handling configuration",
+				Elem: &schema.Schema{
+					Type: schema.TypeString,
+				},
+			},
 			"tune": authMountTuneSchema(),
 		},
 	}
 }
 
-func jwtCustomizeDiff(d *schema.ResourceDiff, meta interface{}) error {
+func jwtCustomizeDiff(_ context.Context, d *schema.ResourceDiff, meta interface{}) error {
 	attributes := []string{
 		"oidc_discovery_url",
 		"jwks_url",
 		"jwt_validation_pubkeys",
+		"provider_config",
 	}
 
 	for _, attr := range attributes {
@@ -156,6 +177,7 @@ var (
 		"bound_issuer",
 		"jwt_supported_algs",
 		"default_role",
+		"provider_config",
 	}
 )
 
@@ -163,12 +185,16 @@ func jwtAuthBackendWrite(d *schema.ResourceData, meta interface{}) error {
 	client := meta.(*api.Client)
 
 	authType := d.Get("type").(string)
-	desc := d.Get("description").(string)
 	path := getJwtPath(d)
+	options := &api.EnableAuthOptions{
+		Type:        authType,
+		Description: d.Get("description").(string),
+		Local:       d.Get("local").(bool),
+	}
 
 	log.Printf("[DEBUG] Writing auth %s to Vault", authType)
 
-	err := client.Sys().EnableAuth(path, authType, desc)
+	err := client.Sys().EnableAuthWithOptions(path, options)
 
 	if err != nil {
 		return fmt.Errorf("error writing to Vault: %s", err)
@@ -201,13 +227,22 @@ func jwtAuthBackendRead(d *schema.ResourceData, meta interface{}) error {
 	path := getJwtPath(d)
 	log.Printf("[DEBUG] Reading auth %s from Vault", path)
 
-	backend, err := getJwtAuthBackendIfPresent(client, path)
+	if path == "" {
+		// In v2.11.0 and prior, path was not read and so not set in the state.
+		// if path is empty here, we're likely in a import scenario where path is
+		// empty. Because path is used as the ID in the resource, if path is empty
+		// use the ID value
+		path = d.Id()
+	}
+	d.Set("path", path)
+
+	mount, err := getAuthMountIfPresent(client, path)
 
 	if err != nil {
 		return fmt.Errorf("unable to check auth backends in Vault for path %s: %s", path, err)
 	}
 
-	if backend == nil {
+	if mount == nil {
 		// If we fell out here then we didn't find our Auth in the list.
 		d.SetId("")
 		return nil
@@ -220,18 +255,67 @@ func jwtAuthBackendRead(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	if config == nil {
-		log.Printf("[WARN] JWT auth backend config %q not found, removing from state", path)
+		log.Printf("[WARN] JWT auth mount config %q not found, removing from state", path)
 		d.SetId("")
 		return nil
 	}
 
-	d.Set("accessor", backend.Accessor)
+	d.Set("type", mount.Type)
+	d.Set("local", mount.Local)
+
+	d.Set("accessor", mount.Accessor)
 	for _, configOption := range matchingJwtMountConfigOptions {
+		// The oidc_client_secret is sensitive so it will not be in the response
+		// Our options are to always assume it must be updated or always assume it
+		//  matches our current state. This assumes it always matches our current
+		//  state so that HasChange isn't always true and we store the last applied
+		//  secret in the state file to know if the new secret should be applied.
+		// This does intentionally miss the edge case where the oidc_client_secret
+		//  is updated without Terraform. Since we cannot know the current state
+		//  of the oidc_secret, Terraform will show no changes necessary even if
+		//  the actual value in Vault does not match the value in state.
+		if configOption == "oidc_client_secret" {
+			continue
+		}
 		d.Set(configOption, config.Data[configOption])
+	}
+
+	log.Printf("[DEBUG] Reading jwt auth tune from %q", path+"/tune")
+	rawTune, err := authMountTuneGet(client, "auth/"+path)
+	if err != nil {
+		return fmt.Errorf("error reading tune information from Vault: %s", err)
+	}
+	if err := d.Set("tune", []map[string]interface{}{rawTune}); err != nil {
+		log.Printf("[ERROR] Error when setting tune config from path %q to state: %s", path+"/tune", err)
+		return err
 	}
 
 	return nil
 
+}
+
+func convertProviderConfigValues(input map[string]interface{}) (map[string]interface{}, error) {
+	newConfig := make(map[string]interface{})
+	for k, v := range input {
+		val := v.(string)
+		switch k {
+		case "fetch_groups", "fetch_user_info":
+			valBool, err := strconv.ParseBool(val)
+			if err != nil {
+				return nil, fmt.Errorf("could not convert %s to bool: %s", k, err)
+			}
+			newConfig[k] = valBool
+		case "groups_recurse_max_depth":
+			valInt, err := strconv.ParseInt(val, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("could not convert %s to int: %s", k, err)
+			}
+			newConfig[k] = valInt
+		default:
+			newConfig[k] = val
+		}
+	}
+	return newConfig, nil
 }
 
 func jwtAuthBackendUpdate(d *schema.ResourceData, meta interface{}) error {
@@ -242,9 +326,17 @@ func jwtAuthBackendUpdate(d *schema.ResourceData, meta interface{}) error {
 
 	configuration := map[string]interface{}{}
 	for _, configOption := range matchingJwtMountConfigOptions {
-		// Set the configuration if the user has specified it, or the attribute is in the Diff
 		if _, ok := d.GetOkExists(configOption); ok || d.HasChange(configOption) {
 			configuration[configOption] = d.Get(configOption)
+
+			if configOption == "provider_config" {
+				newConfig, err := convertProviderConfigValues(d.Get(configOption).(map[string]interface{}))
+				if err != nil {
+					return err
+				}
+
+				configuration[configOption] = newConfig
+			}
 		}
 	}
 
@@ -264,8 +356,7 @@ func jwtAuthBackendUpdate(d *schema.ResourceData, meta interface{}) error {
 				return nil
 			}
 
-			log.Printf("[INFO] Written %s auth tune to '%q'", backendType, path)
-			d.SetPartial("tune")
+			log.Printf("[INFO] Written %s auth tune to %q", backendType, path)
 		}
 	}
 
@@ -274,24 +365,6 @@ func jwtAuthBackendUpdate(d *schema.ResourceData, meta interface{}) error {
 
 func jwtConfigEndpoint(path string) string {
 	return fmt.Sprintf("/auth/%s/config", path)
-}
-
-func getJwtAuthBackendIfPresent(client *api.Client, path string) (*api.AuthMount, error) {
-	auths, err := client.Sys().ListAuth()
-	if err != nil {
-		return nil, fmt.Errorf("error reading from Vault: %s", err)
-	}
-
-	configuredPath := path + "/"
-
-	for authBackendPath, auth := range auths {
-
-		if authBackendPath == configuredPath {
-			return auth, nil
-		}
-	}
-
-	return nil, nil
 }
 
 func getJwtPath(d *schema.ResourceData) string {

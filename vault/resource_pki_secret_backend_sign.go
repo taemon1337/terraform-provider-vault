@@ -1,12 +1,13 @@
 package vault
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -83,7 +84,7 @@ func pkiSecretBackendSignResource() *schema.Resource {
 				Type:        schema.TypeString,
 				Optional:    true,
 				ForceNew:    false,
-				Description: "Time to leave.",
+				Description: "Time to live.",
 			},
 			"format": {
 				Type:         schema.TypeString,
@@ -219,7 +220,7 @@ func pkiSecretBackendSignCreate(d *schema.ResourceData, meta interface{}) error 
 	return pkiSecretBackendSignRead(d, meta)
 }
 
-func pkiSecretBackendSignDiff(d *schema.ResourceDiff, meta interface{}) error {
+func pkiSecretBackendSignDiff(_ context.Context, d *schema.ResourceDiff, meta interface{}) error {
 	if d.Id() == "" {
 		return nil
 	}

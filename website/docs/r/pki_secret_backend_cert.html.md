@@ -21,10 +21,10 @@ for more details.
 
 ```hcl
 resource "vault_pki_secret_backend_cert" "app" {
-  depends_on = [ "vault_pki_secret_backend_role.admin" ]
+  depends_on = [vault_pki_secret_backend_role.admin]
 
-  backend = "${vault_pki_secret_backend.intermediate.path}"
-  name = "${vault_pki_secret_backend_role.test.name}"
+  backend = vault_pki_secret_backend.intermediate.path
+  name = vault_pki_secret_backend_role.test.name
 
   common_name = "app.my.domain"
 }
@@ -43,6 +43,8 @@ The following arguments are supported:
 * `alt_names` - (Optional) List of alternative names
 
 * `ip_sans` - (Optional) List of alternative IPs
+
+* `uri_sans` - (Optional) List of alternative URIs
 
 * `other_sans` - (Optional) List of other SANs
 

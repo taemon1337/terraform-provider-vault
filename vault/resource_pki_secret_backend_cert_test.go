@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -28,6 +28,8 @@ func TestPkiSecretBackendCert_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("vault_pki_secret_backend_cert.test", "backend", intermediatePath),
 					resource.TestCheckResourceAttr("vault_pki_secret_backend_cert.test", "common_name", "cert.test.my.domain"),
 					resource.TestCheckResourceAttr("vault_pki_secret_backend_cert.test", "ttl", "720h"),
+					resource.TestCheckResourceAttr("vault_pki_secret_backend_cert.test", "uri_sans.#", "1"),
+					resource.TestCheckResourceAttr("vault_pki_secret_backend_cert.test", "uri_sans.0", "spiffe://test.my.domain"),
 				),
 			},
 		},
@@ -76,7 +78,7 @@ resource "vault_pki_secret_backend" "test-intermediate" {
 
 resource "vault_pki_secret_backend_root_cert" "test" {
   depends_on = [ "vault_pki_secret_backend.test-intermediate" ]
-  backend = "${vault_pki_secret_backend.test-root.path}"
+  backend = vault_pki_secret_backend.test-root.path
   type = "internal"
   common_name = "my.domain"
   ttl = "86400"
@@ -93,15 +95,15 @@ resource "vault_pki_secret_backend_root_cert" "test" {
 
 resource "vault_pki_secret_backend_intermediate_cert_request" "test" {
   depends_on = [ "vault_pki_secret_backend_root_cert.test" ]
-  backend = "${vault_pki_secret_backend.test-intermediate.path}"
+  backend = vault_pki_secret_backend.test-intermediate.path
   type = "internal"
   common_name = "test.my.domain"
 }
 
 resource "vault_pki_secret_backend_root_sign_intermediate" "test" {
   depends_on = [ "vault_pki_secret_backend_intermediate_cert_request.test" ]
-  backend = "${vault_pki_secret_backend.test-root.path}"
-  csr = "${vault_pki_secret_backend_intermediate_cert_request.test.csr}"
+  backend = vault_pki_secret_backend.test-root.path
+  csr = vault_pki_secret_backend_intermediate_cert_request.test.csr
   common_name = "test.my.domain"
   permitted_dns_domains = [".test.my.domain"]
   ou = "test"
@@ -113,25 +115,27 @@ resource "vault_pki_secret_backend_root_sign_intermediate" "test" {
 
 resource "vault_pki_secret_backend_intermediate_set_signed" "test" {
   depends_on = [ "vault_pki_secret_backend_root_sign_intermediate.test" ]
-  backend = "${vault_pki_secret_backend.test-intermediate.path}"
-  certificate = "${vault_pki_secret_backend_root_sign_intermediate.test.certificate}"
+  backend = vault_pki_secret_backend.test-intermediate.path
+  certificate = vault_pki_secret_backend_root_sign_intermediate.test.certificate
 }
 
 resource "vault_pki_secret_backend_role" "test" {
   depends_on = [ "vault_pki_secret_backend_intermediate_set_signed.test" ]
-  backend = "${vault_pki_secret_backend.test-intermediate.path}"
+  backend = vault_pki_secret_backend.test-intermediate.path
   name = "test"
   allowed_domains  = ["test.my.domain"]
   allow_subdomains = true
+  allowed_uri_sans = ["spiffe://test.my.domain"]
   max_ttl = "3600"
   key_usage = ["DigitalSignature", "KeyAgreement", "KeyEncipherment"]
 }
 
 resource "vault_pki_secret_backend_cert" "test" {
   depends_on = [ "vault_pki_secret_backend_role.test" ]
-  backend = "${vault_pki_secret_backend.test-intermediate.path}"
-  name = "${vault_pki_secret_backend_role.test.name}"
+  backend = vault_pki_secret_backend.test-intermediate.path
+  name = vault_pki_secret_backend_role.test.name
   common_name = "cert.test.my.domain"
+  uri_sans = ["spiffe://test.my.domain"]
   ttl = "720h"
   min_seconds_remaining = 60
 }`, rootPath, intermediatePath)
@@ -196,7 +200,7 @@ resource "vault_pki_secret_backend" "test-root" {
 
 resource "vault_pki_secret_backend_root_cert" "test" {
   depends_on = [ "vault_pki_secret_backend.test-root" ]
-  backend = "${vault_pki_secret_backend.test-root.path}"
+  backend = vault_pki_secret_backend.test-root.path
   type = "internal"
   common_name = "my.domain"
   ttl = "86400"
@@ -213,7 +217,7 @@ resource "vault_pki_secret_backend_root_cert" "test" {
 
 resource "vault_pki_secret_backend_role" "test" {
   depends_on = [ "vault_pki_secret_backend_root_cert.test" ]
-  backend = "${vault_pki_secret_backend.test-root.path}"
+  backend = vault_pki_secret_backend.test-root.path
   name = "test"
   allowed_domains  = ["test.my.domain"]
   allow_subdomains = true
@@ -223,8 +227,8 @@ resource "vault_pki_secret_backend_role" "test" {
 
 resource "vault_pki_secret_backend_cert" "test" {
   depends_on = [ "vault_pki_secret_backend_role.test" ]
-  backend = "${vault_pki_secret_backend.test-root.path}"
-  name = "${vault_pki_secret_backend_role.test.name}"
+  backend = vault_pki_secret_backend.test-root.path
+  name = vault_pki_secret_backend_role.test.name
   common_name = "cert.test.my.domain"
   ttl = "1h"
   auto_renew = true

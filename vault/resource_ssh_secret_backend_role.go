@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -87,6 +87,11 @@ func sshSecretBackendRoleResource() *schema.Resource {
 				Type:     schema.TypeMap,
 				Optional: true,
 			},
+			"allowed_users_template": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+			},
 			"allowed_users": {
 				Type:     schema.TypeString,
 				Optional: true,
@@ -106,6 +111,11 @@ func sshSecretBackendRoleResource() *schema.Resource {
 			"allowed_user_key_lengths": {
 				Type:     schema.TypeMap,
 				Optional: true,
+			},
+			"algorithm_signer": {
+				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
 			},
 			"max_ttl": {
 				Type:     schema.TypeString,
@@ -162,6 +172,11 @@ func sshSecretBackendRoleWrite(d *schema.ResourceData, meta interface{}) error {
 		data["default_critical_options"] = v
 	}
 
+	if v, ok := d.GetOk("allowed_users_template"); ok {
+		data["allowed_users_template"] = v.(bool)
+
+	}
+
 	if v, ok := d.GetOk("allowed_users"); ok {
 		data["allowed_users"] = v.(string)
 	}
@@ -176,6 +191,10 @@ func sshSecretBackendRoleWrite(d *schema.ResourceData, meta interface{}) error {
 
 	if v, ok := d.GetOk("allowed_user_key_lengths"); ok {
 		data["allowed_user_key_lengths"] = v
+	}
+
+	if v, ok := d.GetOk("algorithm_signer"); ok {
+		data["algorithm_signer"] = v.(string)
 	}
 
 	if v, ok := d.GetOk("max_ttl"); ok {
@@ -241,12 +260,14 @@ func sshSecretBackendRoleRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("allowed_extensions", role.Data["allowed_extensions"])
 	d.Set("default_extensions", role.Data["default_extensions"])
 	d.Set("default_critical_options", role.Data["default_critical_options"])
+	d.Set("allowed_users_template", role.Data["allowed_users_template"])
 	d.Set("allowed_users", role.Data["allowed_users"])
 	d.Set("default_user", role.Data["default_user"])
 	d.Set("key_id_format", role.Data["key_id_format"])
 	d.Set("allowed_user_key_lengths", role.Data["allowed_user_key_lengths"])
 	d.Set("max_ttl", role.Data["max_ttl"])
 	d.Set("ttl", role.Data["ttl"])
+	d.Set("algorithm_signer", role.Data["algorithm_signer"])
 
 	return nil
 }

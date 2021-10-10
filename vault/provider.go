@@ -9,11 +9,11 @@ import (
 	"strings"
 
 	"github.com/hashicorp/go-multierror"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/logging"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/mutexkv"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/logging"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-provider-vault/helper"
 	"github.com/hashicorp/vault/api"
+	awsauth "github.com/hashicorp/vault/builtin/credential/aws"
 	"github.com/hashicorp/vault/command/config"
 )
 
@@ -33,9 +33,9 @@ const (
 // Use this when you need to have multiple resources or even multiple instances
 // of the same resource write to the same path in Vault.
 // The key of the mutex should be the path in Vault.
-var vaultMutexKV = mutexkv.NewMutexKV()
+var vaultMutexKV = helper.NewMutexKV()
 
-func Provider() terraform.ResourceProvider {
+func Provider() *schema.Provider {
 	dataSourcesMap, err := parse(DataSourceRegistry)
 	if err != nil {
 		panic(err)
@@ -102,6 +102,10 @@ func Provider() terraform.ResourceProvider {
 							Elem: &schema.Schema{
 								Type: schema.TypeString,
 							},
+						},
+						"method": {
+							Type:     schema.TypeString,
+							Optional: true,
 						},
 					},
 				},
@@ -228,6 +232,14 @@ var (
 			Resource:      kubernetesAuthBackendRoleDataSource(),
 			PathInventory: []string{"/auth/kubernetes/role/{name}"},
 		},
+		"vault_ad_access_credentials": {
+			Resource:      adAccessCredentialsDataSource(),
+			PathInventory: []string{"/ad/creds/{role}"},
+		},
+		"vault_nomad_access_token": {
+			Resource:      nomadAccessCredentialsDataSource(),
+			PathInventory: []string{"/nomad/creds/{role}"},
+		},
 		"vault_aws_access_credentials": {
 			Resource:      awsAccessCredentialsDataSource(),
 			PathInventory: []string{"/aws/creds"},
@@ -248,9 +260,22 @@ var (
 			Resource:      authBackendDataSource(),
 			PathInventory: []string{"/sys/auth"},
 		},
+		"vault_transit_encrypt": {
+			Resource:      transitEncryptDataSource(),
+			PathInventory: []string{"/transit/encrypt/{name}"},
+		},
+		"vault_transit_decrypt": {
+			Resource:      transitDecryptDataSource(),
+			PathInventory: []string{"/transit/decrypt/{name}"},
+		},
+		"vault_gcp_auth_backend_role": {
+			Resource:      gcpAuthBackendRoleDataSource(),
+			PathInventory: []string{"/auth/gcp/role/{role_name}"},
+		},
 	}
 
 	ResourceRegistry = map[string]*Description{
+
 		"vault_alicloud_auth_backend_role": {
 			Resource:      alicloudAuthBackendRoleResource(),
 			PathInventory: []string{"/auth/alicloud/role/{name}"},
@@ -271,7 +296,7 @@ var (
 			},
 		},
 		"vault_auth_backend": {
-			Resource:      authBackendResource(),
+			Resource:      AuthBackendResource(),
 			PathInventory: []string{"/sys/auth/{path}"},
 		},
 		"vault_token": {
@@ -285,6 +310,18 @@ var (
 		"vault_token_auth_backend_role": {
 			Resource:      tokenAuthBackendRoleResource(),
 			PathInventory: []string{"/auth/token/roles/{role_name}"},
+		},
+		"vault_ad_secret_backend": {
+			Resource:      adSecretBackendResource(),
+			PathInventory: []string{"/ad"},
+		},
+		"vault_ad_secret_library": {
+			Resource:      adSecretBackendLibraryResource(),
+			PathInventory: []string{"/ad/library/{name}"},
+		},
+		"vault_ad_secret_role": {
+			Resource:      adSecretBackendRoleResource(),
+			PathInventory: []string{"/ad/roles/{role}"},
 		},
 		"vault_aws_auth_backend_cert": {
 			Resource:      awsAuthBackendCertResource(),
@@ -390,6 +427,10 @@ var (
 			Resource:      gcpSecretRolesetResource(),
 			PathInventory: []string{"/gcp/roleset/{name}"},
 		},
+		"vault_gcp_secret_static_account": {
+			Resource:      gcpSecretStaticAccountResource(),
+			PathInventory: []string{"/gcp/static-account/{name}"},
+		},
 		"vault_cert_auth_backend_role": {
 			Resource:      certAuthBackendRoleResource(),
 			PathInventory: []string{"/auth/cert/certs/{name}"},
@@ -442,6 +483,18 @@ var (
 			Resource:      ldapAuthBackendGroupResource(),
 			PathInventory: []string{"/auth/ldap/groups/{name}"},
 		},
+		"vault_nomad_secret_backend": {
+			Resource: nomadSecretAccessBackendResource(),
+			PathInventory: []string{
+				"/nomad",
+				"/nomad/config/access",
+				"/nomad/config/lease",
+			},
+		},
+		"vault_nomad_secret_role": {
+			Resource:      nomadSecretBackendRoleResource(),
+			PathInventory: []string{"/nomad/role/{role}"},
+		},
 		"vault_policy": {
 			Resource:      policyResource(),
 			PathInventory: []string{"/sys/policy/{name}"},
@@ -462,7 +515,7 @@ var (
 			EnterpriseOnly: true,
 		},
 		"vault_mount": {
-			Resource:      mountResource(),
+			Resource:      MountResource(),
 			PathInventory: []string{"/sys/mounts/{path}"},
 		},
 		"vault_namespace": {
@@ -502,6 +555,10 @@ var (
 			Resource:      identityGroupAliasResource(),
 			PathInventory: []string{"/identity/group-alias"},
 		},
+		"vault_identity_group_member_entity_ids": {
+			Resource:      identityGroupMemberEntityIdsResource(),
+			PathInventory: []string{"/identity/group/id/{id}"},
+		},
 		"vault_identity_group_policies": {
 			Resource:      identityGroupPoliciesResource(),
 			PathInventory: []string{"/identity/lookup/group"},
@@ -532,6 +589,10 @@ var (
 		"vault_rabbitmq_secret_backend_role": {
 			Resource:      rabbitmqSecretBackendRoleResource(),
 			PathInventory: []string{"/rabbitmq/roles/{name}"},
+		},
+		"vault_password_policy": {
+			Resource:      passwordPolicyResource(),
+			PathInventory: []string{"/sys/policy/password/{name}"},
 		},
 		"vault_pki_secret_backend": {
 			Resource:      pkiSecretBackendResource(),
@@ -577,6 +638,26 @@ var (
 			Resource:      pkiSecretBackendSignResource(),
 			PathInventory: []string{"/pki/sign/{role}"},
 		},
+		"vault_quota_lease_count": {
+			Resource:      quotaLeaseCountResource(),
+			PathInventory: []string{"/sys/quotas/lease-count/{name}"},
+		},
+		"vault_quota_rate_limit": {
+			Resource:      quotaRateLimitResource(),
+			PathInventory: []string{"/sys/quotas/rate-limit/{name}"},
+		},
+		"vault_terraform_cloud_secret_backend": {
+			Resource:      terraformCloudSecretBackendResource(),
+			PathInventory: []string{"/terraform/config"},
+		},
+		"vault_terraform_cloud_secret_creds": {
+			Resource:      terraformCloudSecretCredsResource(),
+			PathInventory: []string{"/terraform/creds/{role}"},
+		},
+		"vault_terraform_cloud_secret_role": {
+			Resource:      terraformCloudSecretRoleResource(),
+			PathInventory: []string{"/terraform/role/{name}"},
+		},
 		"vault_transit_secret_backend_key": {
 			Resource:      transitSecretBackendKeyResource(),
 			PathInventory: []string{"/transit/keys/{name}"},
@@ -584,6 +665,10 @@ var (
 		"vault_transit_secret_cache_config": {
 			Resource:      transitSecretBackendCacheConfig(),
 			PathInventory: []string{"/transit/cache-config"},
+		},
+		"vault_raft_snapshot_agent_config": {
+			Resource:      raftSnapshotAgentConfigResource(),
+			PathInventory: []string{"/sys/storage/raft/snapshot-auto/config/{name}"},
 		},
 	}
 )
@@ -658,6 +743,9 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure Vault API: %s", err)
 	}
+
+	client.SetCloneHeaders(true)
+
 	// Set headers if provided
 	headers := d.Get("headers").([]interface{})
 	parsedHeaders := client.Headers().Clone()
@@ -697,6 +785,13 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 			client.SetNamespace(authLoginNamespace)
 		}
 		authLoginParameters := authLogin["parameters"].(map[string]interface{})
+
+		method := authLogin["method"].(string)
+		if method == "aws" {
+			if err := signAWSLogin(authLoginParameters); err != nil {
+				return nil, fmt.Errorf("error signing AWS login request: %s", err)
+			}
+		}
 
 		secret, err := client.Logical().Write(authLoginPath, authLoginParameters)
 		if err != nil {
@@ -758,7 +853,7 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 
 	log.Printf("[INFO] Using Vault token with the following policies: %s", strings.Join(policies, ", "))
 
-	// Set tht token to the generated child token
+	// Set the token to the generated child token
 	client.SetToken(childToken)
 
 	// Set the namespace to the requested namespace, if provided
@@ -779,4 +874,45 @@ func parse(descs map[string]*Description) (map[string]*schema.Resource, error) {
 		}
 	}
 	return resourceMap, errs
+}
+
+func signAWSLogin(parameters map[string]interface{}) error {
+	var accessKey, secretKey, securityToken string
+	if val, ok := parameters["aws_access_key_id"].(string); ok {
+		accessKey = val
+	}
+
+	if val, ok := parameters["aws_secret_access_key"].(string); ok {
+		secretKey = val
+	}
+
+	if val, ok := parameters["aws_security_token"].(string); ok {
+		securityToken = val
+	}
+
+	creds, err := awsauth.RetrieveCreds(accessKey, secretKey, securityToken)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve AWS credentials: %s", err)
+	}
+
+	var headerValue, stsRegion string
+	if val, ok := parameters["header_value"].(string); ok {
+		headerValue = val
+	}
+
+	if val, ok := parameters["sts_region"].(string); ok {
+		stsRegion = val
+	}
+
+	loginData, err := awsauth.GenerateLoginData(creds, headerValue, stsRegion)
+	if err != nil {
+		return fmt.Errorf("failed to generate AWS login data: %s", err)
+	}
+
+	parameters["iam_http_request_method"] = loginData["iam_http_request_method"]
+	parameters["iam_request_url"] = loginData["iam_request_url"]
+	parameters["iam_request_headers"] = loginData["iam_request_headers"]
+	parameters["iam_request_body"] = loginData["iam_request_body"]
+
+	return nil
 }

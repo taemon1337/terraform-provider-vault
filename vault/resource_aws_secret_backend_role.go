@@ -6,9 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/vault/api"
-	"github.com/terraform-providers/terraform-provider-vault/util"
+
+	"github.com/hashicorp/terraform-provider-vault/util"
 )
 
 func awsSecretBackendRoleResource() *schema.Resource {
@@ -36,35 +37,18 @@ func awsSecretBackendRoleResource() *schema.Resource {
 				Description: "The path of the AWS Secret Backend the role belongs to.",
 			},
 			"policy_arns": {
-				Type:          schema.TypeSet,
-				Optional:      true,
-				ConflictsWith: []string{"policy", "policy_arn"},
-				Description:   "ARN for an existing IAM policy the role should use.",
+				Type:        schema.TypeSet,
+				Optional:    true,
+				Description: "ARN for an existing IAM policy the role should use.",
 				Elem: &schema.Schema{
 					Type: schema.TypeString,
 				},
 			},
-			"policy_arn": {
-				Type:          schema.TypeString,
-				Optional:      true,
-				ConflictsWith: []string{"policy_document", "policy", "policy_arns", "role_arns"},
-				Description:   "ARN for an existing IAM policy the role should use.",
-				Removed:       `Use "policy_arns".`,
-			},
 			"policy_document": {
 				Type:             schema.TypeString,
 				Optional:         true,
-				ConflictsWith:    []string{"policy_arn", "policy"},
 				Description:      "IAM policy the role should use in JSON format.",
 				DiffSuppressFunc: util.JsonDiffSuppress,
-			},
-			"policy": {
-				Type:             schema.TypeString,
-				Optional:         true,
-				ConflictsWith:    []string{"policy_arns", "policy_arn", "policy_document", "role_arns"},
-				Description:      "IAM policy the role should use in JSON format.",
-				DiffSuppressFunc: util.JsonDiffSuppress,
-				Removed:          `Use "policy_document".`,
 			},
 			"credential_type": {
 				Type:        schema.TypeString,
@@ -76,10 +60,17 @@ func awsSecretBackendRoleResource() *schema.Resource {
 				Elem: &schema.Schema{
 					Type: schema.TypeString,
 				},
-				Optional:      true,
-				ForceNew:      true,
-				ConflictsWith: []string{"policy", "policy_arn"},
-				Description:   "ARNs of AWS roles allowed to be assumed. Only valid when credential_type is 'assumed_role'",
+				Optional:    true,
+				ForceNew:    true,
+				Description: "ARNs of AWS roles allowed to be assumed. Only valid when credential_type is 'assumed_role'",
+			},
+			"iam_groups": {
+				Type: schema.TypeSet,
+				Elem: &schema.Schema{
+					Type: schema.TypeString,
+				},
+				Optional:    true,
+				Description: "A list of IAM group names. IAM users generated against this vault role will be added to these IAM Groups. For a credential type of assumed_role or federation_token, the policies sent to the corresponding AWS call (sts:AssumeRole or sts:GetFederation) will be the policies from each group in iam_groups combined with the policy_document and policy_arns parameters.",
 			},
 			"default_sts_ttl": {
 				Type:        schema.TypeInt,
@@ -121,8 +112,10 @@ func awsSecretBackendRoleWrite(d *schema.ResourceData, meta interface{}) error {
 
 	roleARNs := d.Get("role_arns").(*schema.Set).List()
 
-	if policy == "" && len(policyARNs) == 0 && len(roleARNs) == 0 {
-		return fmt.Errorf("either policy, policy_arns, or role_arns must be set")
+	iamGroups := d.Get("iam_groups").(*schema.Set).List()
+
+	if policy == "" && len(policyARNs) == 0 && len(roleARNs) == 0 && len(iamGroups) == 0 {
+		return fmt.Errorf("at least one of `policy`, `policy_arns`, `role_arns` or `iam_groups` must be set")
 	}
 
 	credentialType := d.Get("credential_type").(string)
@@ -138,6 +131,9 @@ func awsSecretBackendRoleWrite(d *schema.ResourceData, meta interface{}) error {
 	}
 	if len(roleARNs) != 0 {
 		data["role_arns"] = roleARNs
+	}
+	if len(iamGroups) != 0 || !d.IsNewResource() {
+		data["iam_groups"] = iamGroups
 	}
 
 	defaultStsTTL, defaultStsTTLOk := d.GetOk("default_sts_ttl")
@@ -213,6 +209,9 @@ func awsSecretBackendRoleRead(d *schema.ResourceData, meta interface{}) error {
 	}
 	if v, ok := secret.Data["max_sts_ttl"]; ok {
 		d.Set("max_sts_ttl", v)
+	}
+	if v, ok := secret.Data["iam_groups"]; ok {
+		d.Set("iam_groups", v)
 	}
 	d.Set("backend", strings.Join(pathPieces[:len(pathPieces)-2], "/"))
 	d.Set("name", pathPieces[len(pathPieces)-1])

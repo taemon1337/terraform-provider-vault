@@ -1,15 +1,16 @@
 package vault
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"regexp"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/customdiff"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/customdiff"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -76,10 +77,10 @@ func transitSecretBackendKeyResource() *schema.Resource {
 			"type": {
 				Type:         schema.TypeString,
 				Optional:     true,
-				Description:  "Specifies the type of key to create. The currently-supported types are: aes128-gcm96, aes256-gcm96, chacha20-poly1305, ed25519, ecdsa-p256, ecdsa-p384, ecdsa-p521, rsa-2048, rsa-4096",
+				Description:  "Specifies the type of key to create. The currently-supported types are: aes128-gcm96, aes256-gcm96, chacha20-poly1305, ed25519, ecdsa-p256, ecdsa-p384, ecdsa-p521, rsa-2048, rsa-3072, rsa-4096",
 				ForceNew:     true,
 				Default:      "aes256-gcm96",
-				ValidateFunc: validation.StringInSlice([]string{"aes128-gcm96", "aes256-gcm96", "chacha20-poly1305", "ed25519", "ecdsa-p256", "ecdsa-p384", "ecdsa-p521", "rsa-2048", "rsa-4096"}, false),
+				ValidateFunc: validation.StringInSlice([]string{"aes128-gcm96", "aes256-gcm96", "chacha20-poly1305", "ed25519", "ecdsa-p256", "ecdsa-p384", "ecdsa-p521", "rsa-2048", "rsa-3072", "rsa-4096"}, false),
 			},
 			"keys": {
 				Type:        schema.TypeList,
@@ -141,7 +142,7 @@ func transitSecretBackendKeyResource() *schema.Resource {
 			},
 		},
 		CustomizeDiff: customdiff.All(
-			customdiff.ValidateChange("exportable", func(old, new, meta interface{}) error {
+			customdiff.ValidateChange("exportable", func(_ context.Context, old, new, meta interface{}) error {
 				// 'exportable' Can only be enabled once, and once it is enabled, it cannot be disabled
 				//   without creating a new key
 
@@ -155,7 +156,7 @@ func transitSecretBackendKeyResource() *schema.Resource {
 				}
 				return nil
 			}),
-			customdiff.ValidateChange("allow_plaintext_backup", func(old, new, meta interface{}) error {
+			customdiff.ValidateChange("allow_plaintext_backup", func(_ context.Context, old, new, meta interface{}) error {
 				// Same conditions as above. This cannot be disabled once enabled.
 				if new.(bool) && !old.(bool) {
 					return nil
@@ -165,10 +166,10 @@ func transitSecretBackendKeyResource() *schema.Resource {
 				}
 				return nil
 			}),
-			customdiff.ForceNewIfChange("exportable", func(old, new, meta interface{}) bool {
+			customdiff.ForceNewIfChange("exportable", func(_ context.Context, old, new, meta interface{}) bool {
 				return !new.(bool) && old.(bool)
 			}),
-			customdiff.ForceNewIfChange("allow_plaintext_backup", func(old, new, meta interface{}) bool {
+			customdiff.ForceNewIfChange("allow_plaintext_backup", func(_ context.Context, old, new, meta interface{}) bool {
 				return !new.(bool) && old.(bool)
 			}),
 		),
@@ -245,7 +246,7 @@ func transitSecretBackendKeyRead(d *schema.ResourceData, meta interface{}) error
 		return nil
 	}
 
-	// The vault API does not use "convergent_encryption" when the key type is not one of rsa-2048, rsa-4096, ed25519, or ecdsa-p256
+	// The vault API does not use "convergent_encryption" when the key type is not one of rsa-2048, rsa-3072, rsa-4096, ed25519, ecdsa-p256, ecdsa-p384 or ecdsa-p521
 	iConvergentEncryption := secret.Data["convergent_encryption"]
 	convergentEncryption := false
 	if ce, ok := iConvergentEncryption.(bool); ok {
@@ -278,9 +279,9 @@ func transitSecretBackendKeyRead(d *schema.ResourceData, meta interface{}) error
 		// Data structure of "keys" differs depending on encryption key type. Sometimes it's a single integer hash,
 		// and other times it's a full map of values describing the key version's creation date, name, and public key.
 
-		if sv, ok := v.(map[string]interface{}); ok { // for key types of rsa-2048, rsa-4096, ed25519, or ecdsa-p256
+		if sv, ok := v.(map[string]interface{}); ok { // for key types of rsa-2048, rsa-3072, rsa-4096, ed25519, ecdsa-p256, ecdsa-p384 or ecdsa-p521
 			keys = append(keys, sv)
-		} else if sv, ok := v.(json.Number); ok { // for key types of aes256-gcm96 or chacha20-poly1305
+		} else if sv, ok := v.(json.Number); ok { // for key types of aes128-gcm96, aes256-gcm96 or chacha20-poly1305
 			m := make(map[string]interface{})
 			m["id"] = sv
 			keys = append(keys, m)

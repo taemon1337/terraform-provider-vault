@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -68,6 +68,14 @@ func gcpSecretBackendResource() *schema.Resource {
 				Default:     "",
 				Description: "Maximum possible lease duration for secrets in seconds",
 			},
+			"local": {
+				Type:        schema.TypeBool,
+				Required:    false,
+				Optional:    true,
+				Computed:    false,
+				ForceNew:    true,
+				Description: "Local mount flag that can be explicitly set to true to enforce local mount in HA environment",
+			},
 		},
 	}
 }
@@ -80,6 +88,7 @@ func gcpSecretBackendCreate(d *schema.ResourceData, meta interface{}) error {
 	defaultTTL := d.Get("default_lease_ttl_seconds").(int)
 	maxTTL := d.Get("max_lease_ttl_seconds").(int)
 	credentials := d.Get("credentials").(string)
+	local := d.Get("local").(bool)
 
 	configPath := gcpSecretBackendConfigPath(path)
 
@@ -92,17 +101,13 @@ func gcpSecretBackendCreate(d *schema.ResourceData, meta interface{}) error {
 			DefaultLeaseTTL: fmt.Sprintf("%ds", defaultTTL),
 			MaxLeaseTTL:     fmt.Sprintf("%ds", maxTTL),
 		},
+		Local: local,
 	})
 	if err != nil {
 		return fmt.Errorf("error mounting to %q: %s", path, err)
 	}
 	log.Printf("[DEBUG] Mounted GCP backend at %q", path)
 	d.SetId(path)
-
-	d.SetPartial("path")
-	d.SetPartial("description")
-	d.SetPartial("default_lease_ttl_seconds")
-	d.SetPartial("max_lease_ttl_seconds")
 
 	log.Printf("[DEBUG] Writing GCP configuration to %q", configPath)
 	if credentials != "" {
@@ -146,6 +151,7 @@ func gcpSecretBackendRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("description", mount.Description)
 	d.Set("default_lease_ttl_seconds", mount.Config.DefaultLeaseTTL)
 	d.Set("max_lease_ttl_seconds", mount.Config.MaxLeaseTTL)
+	d.Set("local", mount.Local)
 
 	return nil
 }
@@ -166,8 +172,6 @@ func gcpSecretBackendUpdate(d *schema.ResourceData, meta interface{}) error {
 			return fmt.Errorf("error updating mount TTLs for %q: %s", path, err)
 		}
 		log.Printf("[DEBUG] Updated lease TTLs for %q", path)
-		d.SetPartial("default_lease_ttl_seconds")
-		d.SetPartial("max_lease_ttl_seconds")
 	}
 
 	if d.HasChange("credentials") {
@@ -179,7 +183,6 @@ func gcpSecretBackendUpdate(d *schema.ResourceData, meta interface{}) error {
 			return fmt.Errorf("error writing GCP credentials for %q: %s", path, err)
 		}
 		log.Printf("[DEBUG] Updated credentials for %q", path)
-		d.SetPartial("credentials")
 	}
 
 	d.Partial(false)

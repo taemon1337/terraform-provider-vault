@@ -5,7 +5,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -37,22 +37,6 @@ func githubAuthBackendResource() *schema.Resource {
 			Optional:    true,
 			Description: "Specifies the description of the mount. This overrides the current stored value, if any.",
 		},
-		"ttl": {
-			Type:          schema.TypeString,
-			Optional:      true,
-			Description:   "Duration after which authentication will be expired, in seconds.",
-			ValidateFunc:  validateDuration,
-			Deprecated:    "use `token_ttl` instead if you are running Vault >= 1.2",
-			ConflictsWith: []string{"token_ttl"},
-		},
-		"max_ttl": {
-			Type:          schema.TypeString,
-			Optional:      true,
-			Description:   "Maximum duration after which authentication will be expired, in seconds.",
-			ValidateFunc:  validateDuration,
-			Deprecated:    "use `token_max_ttl` instead if you are running Vault >= 1.2",
-			ConflictsWith: []string{"token_max_ttl"},
-		},
 		"accessor": {
 			Type:        schema.TypeString,
 			Computed:    true,
@@ -61,10 +45,7 @@ func githubAuthBackendResource() *schema.Resource {
 		"tune": authMountTuneSchema(),
 	}
 
-	addTokenFields(fields, &addTokenFieldsConfig{
-		TokenMaxTTLConflict: []string{"max_ttl"},
-		TokenTTLConflict:    []string{"ttl"},
-	})
+	addTokenFields(fields, &addTokenFieldsConfig{})
 
 	return &schema.Resource{
 		Create: githubAuthBackendCreate,
@@ -102,7 +83,6 @@ func githubAuthBackendCreate(d *schema.ResourceData, meta interface{}) error {
 	d.SetId(path)
 	d.MarkNewResource()
 	d.Partial(true)
-	d.SetPartial("path")
 	return githubAuthBackendUpdate(d, meta)
 }
 
@@ -120,32 +100,8 @@ func githubAuthBackendUpdate(d *schema.ResourceData, meta interface{}) error {
 	if v, ok := d.GetOk("base_url"); ok {
 		data["base_url"] = v.(string)
 	}
-	if v, ok := d.GetOk("ttl"); ok {
-		data["ttl"] = v.(string)
-	}
-	if v, ok := d.GetOk("max_ttl"); ok {
-		data["max_ttl"] = v.(string)
-	}
 
 	updateTokenFields(d, data, false)
-
-	// Check if the user is using the deprecated `ttl`
-	if _, deprecated := d.GetOk("ttl"); deprecated {
-		// Then we see if `token_ttl` was set and unset it
-		// Vault will still return `ttl`
-		if _, ok := d.GetOk("token_ttl"); ok {
-			d.Set("token_ttl", nil)
-		}
-	}
-
-	// Check if the user is using the deprecated `max_ttl`
-	if _, deprecated := d.GetOk("max_ttl"); deprecated {
-		// Then we see if `token_max_ttl` was set and unset it
-		// Vault will still return `max_ttl`
-		if _, ok := d.GetOk("token_max_ttl"); ok {
-			d.Set("token_max_ttl", nil)
-		}
-	}
 
 	log.Printf("[DEBUG] Writing github auth config to '%q'", configPath)
 	_, err := client.Logical().Write(configPath, data)
@@ -155,15 +111,6 @@ func githubAuthBackendUpdate(d *schema.ResourceData, meta interface{}) error {
 		return fmt.Errorf("error writing github config to '%q': %s", configPath, err)
 	}
 	log.Printf("[INFO] Github auth config successfully written to '%q'", configPath)
-
-	d.SetPartial("organization")
-	d.SetPartial("base_url")
-	if _, ok := data["ttl"]; ok {
-		d.SetPartial("ttl")
-	}
-	if _, ok := data["max_ttl"]; ok {
-		d.SetPartial("max_ttl")
-	}
 
 	if d.HasChange("tune") {
 		log.Printf("[INFO] Github Auth '%q' tune configuration changed", d.Id())
@@ -176,7 +123,6 @@ func githubAuthBackendUpdate(d *schema.ResourceData, meta interface{}) error {
 			}
 
 			log.Printf("[INFO] Written github auth tune to '%q'", path)
-			d.SetPartial("tune")
 		}
 	}
 
@@ -188,7 +134,6 @@ func githubAuthBackendUpdate(d *schema.ResourceData, meta interface{}) error {
 			log.Printf("[ERROR] Error updating github auth description to '%q'", path)
 			return err
 		}
-		d.SetPartial("description")
 	}
 
 	d.Partial(false)
@@ -221,24 +166,16 @@ func githubAuthBackendRead(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	log.Printf("[DEBUG] Reading github auth tune from '%q/tune'", path)
-	tune, err := client.Sys().MountConfig(path)
+	rawTune, err := authMountTuneGet(client, path)
 	if err != nil {
-		log.Printf("[ERROR] Error when reading tune config from path '%q/tune': %s", path, err)
-		return err
+		return fmt.Errorf("error reading tune information from Vault: %s", err)
 	}
 
-	rawTune := flattenAuthMethodTune(tune)
 	if err := d.Set("tune", []map[string]interface{}{rawTune}); err != nil {
 		log.Printf("[ERROR] Error when setting tune config from path '%q/tune' to state: %s", path, err)
 		return err
 	}
 
-	log.Printf("[INFO] Read github auth tune from '%q/tune'", path)
-
-	authMount, err := authMountInfoGet(client, d.Id())
-	if err != nil {
-		return err
-	}
 	ttlS := flattenVaultDuration(dt.Data["ttl"])
 	maxTtlS := flattenVaultDuration(dt.Data["max_ttl"])
 
@@ -269,7 +206,7 @@ func githubAuthBackendRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("path", d.Id())
 	d.Set("organization", dt.Data["organization"])
 	d.Set("base_url", dt.Data["base_url"])
-	d.Set("description", authMount.Description)
+	d.Set("description", mount.Description)
 	d.Set("accessor", mount.Accessor)
 
 	return nil

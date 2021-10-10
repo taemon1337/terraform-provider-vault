@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -30,6 +30,7 @@ resource "vault_audit" "test" {
 	path = "%s"
 	type = "file"
 	description = "Example file audit for vault"
+	local = true
 	options = {
 		path = "stdout"
 	}
@@ -70,6 +71,10 @@ func testResourceAudit_initialCheck(expectedPath string) resource.TestCheckFunc 
 
 		if wanted := "file"; audit.Type != wanted {
 			return fmt.Errorf("type is %v; wanted %v", audit.Type, wanted)
+		}
+
+		if wanted := true; audit.Local != wanted {
+			return fmt.Errorf("local is %v; wanted %v", audit.Local, wanted)
 		}
 
 		if wanted := "stdout"; audit.Options["path"] != wanted {

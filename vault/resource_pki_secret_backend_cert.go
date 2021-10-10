@@ -1,13 +1,14 @@
 package vault
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -56,6 +57,15 @@ func pkiSecretBackendCertResource() *schema.Resource {
 					Type: schema.TypeString,
 				},
 			},
+			"uri_sans": {
+				Type:        schema.TypeList,
+				Optional:    true,
+				Description: "List of alternative URIs.",
+				ForceNew:    true,
+				Elem: &schema.Schema{
+					Type: schema.TypeString,
+				},
+			},
 			"other_sans": {
 				Type:        schema.TypeList,
 				Optional:    true,
@@ -69,7 +79,7 @@ func pkiSecretBackendCertResource() *schema.Resource {
 				Type:        schema.TypeString,
 				Optional:    true,
 				ForceNew:    false,
-				Description: "Time to leave.",
+				Description: "Time to live.",
 			},
 			"format": {
 				Type:         schema.TypeString,
@@ -167,6 +177,12 @@ func pkiSecretBackendCertCreate(d *schema.ResourceData, meta interface{}) error 
 		ipSans = append(ipSans, iIpSan.(string))
 	}
 
+	iURISans := d.Get("uri_sans").([]interface{})
+	uriSans := make([]string, 0, len(iURISans))
+	for _, iUriSan := range iURISans {
+		uriSans = append(uriSans, iUriSan.(string))
+	}
+
 	iOtherSans := d.Get("other_sans").([]interface{})
 	otherSans := make([]string, 0, len(iOtherSans))
 	for _, iOtherSan := range iOtherSans {
@@ -187,6 +203,10 @@ func pkiSecretBackendCertCreate(d *schema.ResourceData, meta interface{}) error 
 
 	if len(ipSans) > 0 {
 		data["ip_sans"] = strings.Join(ipSans, ",")
+	}
+
+	if len(uriSans) > 0 {
+		data["uri_sans"] = strings.Join(uriSans, ",")
 	}
 
 	if len(otherSans) > 0 {
@@ -226,7 +246,7 @@ func pkiSecretBackendCertNeedsRenewed(autoRenew bool, expiration int, minSecRema
 	return time.Now().After(renewTime)
 }
 
-func pkiSecretBackendCertDiff(d *schema.ResourceDiff, meta interface{}) error {
+func pkiSecretBackendCertDiff(_ context.Context, d *schema.ResourceDiff, meta interface{}) error {
 	if d.Id() == "" {
 		return nil
 	}

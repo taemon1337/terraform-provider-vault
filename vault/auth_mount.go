@@ -5,8 +5,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -95,6 +95,16 @@ func authMountTune(client *api.Client, path string, configured interface{}) erro
 	return nil
 }
 
+func authMountTuneGet(client *api.Client, path string) (map[string]interface{}, error) {
+	tune, err := client.Sys().MountConfig(path)
+	if err != nil {
+		log.Printf("[ERROR] Error when reading tune config from path %q: %s", path+"/tune", err)
+		return nil, err
+	}
+
+	return flattenAuthMethodTune(tune), nil
+}
+
 func authMountDisable(client *api.Client, path string) error {
 	log.Printf("[DEBUG] Disabling auth mount config from '%q'", path)
 	err := client.Sys().DisableAuth(path)
@@ -104,4 +114,22 @@ func authMountDisable(client *api.Client, path string) error {
 	log.Printf("[INFO] Disabled auth mount from '%q'", path)
 
 	return nil
+}
+
+func getAuthMountIfPresent(client *api.Client, path string) (*api.AuthMount, error) {
+	auths, err := client.Sys().ListAuth()
+	if err != nil {
+		return nil, fmt.Errorf("error reading from Vault: %s", err)
+	}
+
+	configuredPath := path + "/"
+
+	for authBackendPath, auth := range auths {
+
+		if authBackendPath == configuredPath {
+			return auth, nil
+		}
+	}
+
+	return nil, nil
 }

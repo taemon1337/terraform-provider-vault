@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -86,10 +86,11 @@ func testAccSSHSecretBackendCAConfigGenerated(backend string) string {
 resource "vault_mount" "test" {
   type = "ssh"
   path = "%s"
+  description = "SSH Secret backend"
 }
 
 resource "vault_ssh_secret_backend_ca" "test" {
-  backend              = "${vault_mount.test.path}"
+  backend              = vault_mount.test.path
   generate_signing_key = true
 }`, backend)
 }
@@ -99,10 +100,11 @@ func testAccSSHSecretBackendCAConfigProvided(backend string) string {
 resource "vault_mount" "test" {
   type = "ssh"
   path = "%s"
+  description = "SSH Secret backend"
 }
 
 resource "vault_ssh_secret_backend_ca" "test" {
-  backend     = "${vault_mount.test.path}"
+  backend     = vault_mount.test.path
   private_key = <<EOF
 -----BEGIN RSA PRIVATE KEY-----
 MIIEowIBAAKCAQEAu/5/sDSqVMV6USjgPkGcHM9X3ENtgMU4AFrKAMCV85qbGhgR
@@ -138,6 +140,7 @@ EOF
 
 func testAccSSHSecretBackendCACheck(backend string) resource.TestCheckFunc {
 	return resource.ComposeTestCheckFunc(
+		resource.TestCheckResourceAttrSet("vault_mount.test", "description"),
 		resource.TestCheckResourceAttrSet("vault_ssh_secret_backend_ca.test", "public_key"),
 		resource.TestCheckResourceAttr("vault_ssh_secret_backend_ca.test", "backend", backend),
 	)

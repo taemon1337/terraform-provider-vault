@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"github.com/hashicorp/vault/api"
 )
 
@@ -33,11 +33,13 @@ func TestAccSSHSecretBackendRole_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_extensions", ""),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "default_extensions.%", "0"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "default_critical_options.%", "0"),
+					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_users_template", "false"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_users", ""),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "default_user", ""),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "key_id_format", ""),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "key_type", "ca"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_user_key_lengths.%", "0"),
+					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "algorithm_signer", ""),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "max_ttl", "0"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "ttl", "0"),
 				),
@@ -57,11 +59,13 @@ func TestAccSSHSecretBackendRole_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_extensions", "ext1,ext2"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "default_extensions.ext1", ""),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "default_critical_options.opt1", ""),
+					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_users_template", "true"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_users", "usr1,usr2"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "default_user", "usr"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "key_id_format", "{{role_name}}-test"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "key_type", "ca"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_user_key_lengths.rsa", "1"),
+					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "algorithm_signer", "rsa-sha2-256"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "max_ttl", "86400"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "ttl", "43200"),
 				),
@@ -115,11 +119,13 @@ func TestAccSSHSecretBackendRole_import(t *testing.T) {
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_extensions", "ext1,ext2"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "default_extensions.ext1", ""),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "default_critical_options.opt1", ""),
+					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_users_template", "true"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_users", "usr1,usr2"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "default_user", "usr"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "key_id_format", "{{role_name}}-test"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "key_type", "ca"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "allowed_user_key_lengths.rsa", "1"),
+					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "algorithm_signer", "rsa-sha2-256"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "max_ttl", "86400"),
 					resource.TestCheckResourceAttr("vault_ssh_secret_backend_role.test_role", "ttl", "43200"),
 				),
@@ -160,7 +166,7 @@ resource "vault_mount" "example" {
 
 resource "vault_ssh_secret_backend_role" "test_role" {
 	name                    = "%s"
-	backend                 = "${vault_mount.example.path}"
+	backend                 = vault_mount.example.path
 	key_type                = "ca"
 	allow_user_certificates = true
 }
@@ -177,7 +183,7 @@ resource "vault_mount" "example" {
 
 resource "vault_ssh_secret_backend_role" "test_role" {
 	name                     = "%s"
-	backend                  = "${vault_mount.example.path}"
+	backend                  = vault_mount.example.path
 	allow_bare_domains       = true
 	allow_host_certificates  = true
 	allow_subdomains         = true
@@ -188,11 +194,13 @@ resource "vault_ssh_secret_backend_role" "test_role" {
 	allowed_extensions       = "ext1,ext2"
 	default_extensions       = { "ext1" = "" }
 	default_critical_options = { "opt1" = "" }
-	allowed_users            = "usr1,usr2"
+        allowed_users_template   = true
+        allowed_users            = "usr1,usr2"
 	default_user             = "usr"
 	key_id_format            = "{{role_name}}-test"
 	key_type                 = "ca"
 	allowed_user_key_lengths = { "rsa" = 1 }
+	algorithm_signer         = "rsa-sha2-256"
 	max_ttl                  = "86400"
 	ttl                      = "43200"
 }
@@ -208,7 +216,7 @@ resource "vault_mount" "example" {
 
 resource "vault_ssh_secret_backend_role" "test_role" {
 	name                     = "%s"
-	backend                  = "${vault_mount.example.path}"
+	backend                  = vault_mount.example.path
 	allowed_users            = "usr1,usr2"
 	default_user             = "usr"
 	key_type                 = "otp"

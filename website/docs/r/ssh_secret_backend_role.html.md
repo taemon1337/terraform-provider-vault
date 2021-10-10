@@ -20,14 +20,14 @@ resource "vault_mount" "example" {
 
 resource "vault_ssh_secret_backend_role" "foo" {
     name                    = "my-role"
-    backend                 = "${vault_mount.example.path}"
+    backend                 = vault_mount.example.path
     key_type                = "ca"
     allow_user_certificates = true
 }
 
 resource "vault_ssh_secret_backend_role" "bar" {
     name          = "otp-role"
-    backend       = "${vault_mount.example.path}"
+    backend       = vault_mount.example.path
     key_type      = "otp"
     default_user  = "default"
     allowed_users = "default,baz"
@@ -67,11 +67,15 @@ The following arguments are supported:
 
 * `default_critical_options` - (Optional) Specifies a map of critical options that certificates have when signed.
 
+* `allowed_users_template` - (Optional) Specifies if `allowed_users` can be declared using identity template policies. Non-templated users are also permitted.
+
 * `allowed_users` - (Optional) Specifies a comma-separated list of usernames that are to be allowed, only if certain usernames are to be allowed.
 
 * `default_user` - (Optional) Specifies the default username for which a credential will be generated.
 
 * `key_id_format` - (Optional) Specifies a custom format for the key id of a signed certificate.
+
+* `algorithm_signer` - (Optional) When supplied, this value specifies a signing algorithm for the key. Possible values: ssh-rsa, rsa-sha2-256, rsa-sha2-512.
 
 * `allowed_user_key_lengths` - (Optional) Specifies a map of ssh key types and their expected sizes which are allowed to be signed by the CA type.
 

@@ -19,6 +19,37 @@ resource "vault_mount" "example" {
 }
 ```
 
+```hcl
+resource "vault_mount" "kvv2-example" {
+  path        = "version2-example"
+  type        = "kv-v2"
+  description = "This is an example KV Version 2 secret engine mount"
+}
+```
+
+```hcl
+resource "vault_mount" "transit-example" {
+  path        = "transit-example"
+  type        = "transit"
+  description = "This is an example transit secret engine mount"
+
+  options = {
+    convergent_encryption = false
+  }
+}
+```
+
+```hcl
+resource "vault_mount" "pki-example" {
+  path        = "pki-example"
+  type        = "pki"
+  description = "This is an example PKI mount"
+
+  default_lease_ttl_seconds = 3600
+  max_lease_ttl_seconds     = 86400
+}
+```
+
 ## Argument Reference
 
 The following arguments are supported:
@@ -38,6 +69,8 @@ The following arguments are supported:
 * `options` - (Optional) Specifies mount type specific options that are passed to the backend
 
 * `seal_wrap` - (Optional) Boolean flag that can be explicitly set to true to enable seal wrapping for the mount, causing values stored by the mount to be wrapped by the seal's encryption capability
+
+* `external_entropy_access` - (Optional) Boolean flag that can be explicitly set to true to enable the secrets engine to access Vault's external entropy source
 
 ## Attributes Reference
 

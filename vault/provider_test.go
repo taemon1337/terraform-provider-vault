@@ -7,11 +7,10 @@ import (
 	"path"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/pathorcontents"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"github.com/hashicorp/vault/command/config"
 	"github.com/mitchellh/go-homedir"
 )
@@ -43,17 +42,17 @@ import (
 // start over with a fresh Vault. (Remember to reset VAULT_TOKEN.)
 
 func TestProvider(t *testing.T) {
-	if err := Provider().(*schema.Provider).InternalValidate(); err != nil {
+	if err := Provider().InternalValidate(); err != nil {
 		t.Fatalf("err: %s", err)
 	}
 }
 
 var testProvider *schema.Provider
-var testProviders map[string]terraform.ResourceProvider
+var testProviders map[string]*schema.Provider
 
 func init() {
-	testProvider = Provider().(*schema.Provider)
-	testProviders = map[string]terraform.ResourceProvider{
+	testProvider = Provider()
+	testProviders = map[string]*schema.Provider{
 		"vault": testProvider,
 	}
 }
@@ -77,6 +76,14 @@ func getTestAWSCreds(t *testing.T) (string, string) {
 		t.Skip("AWS_SECRET_ACCESS_KEY not set")
 	}
 	return accessKey, secretKey
+}
+
+func getTestAWSRegion(t *testing.T) string {
+	region := os.Getenv("AWS_DEFAULT_REGION")
+	if region == "" {
+		t.Skip("AWS_DEFAULT_REGION not set")
+	}
+	return region
 }
 
 type azureTestConf struct {
@@ -110,10 +117,10 @@ func getTestAzureConf(t *testing.T) *azureTestConf {
 }
 
 func getTestGCPCreds(t *testing.T) (string, string) {
-	credentials := os.Getenv("GOOGLE_CREDENTIALS")
+	maybeCreds := os.Getenv("GOOGLE_CREDENTIALS")
 	project := os.Getenv("GOOGLE_PROJECT")
 
-	if credentials == "" {
+	if maybeCreds == "" {
 		t.Skip("GOOGLE_CREDENTIALS not set")
 	}
 
@@ -121,12 +128,24 @@ func getTestGCPCreds(t *testing.T) (string, string) {
 		t.Skip("GOOGLE_PROJECT not set")
 	}
 
-	contents, _, err := pathorcontents.Read(credentials)
-	if err != nil {
-		t.Fatal("Error reading GOOGLE_CREDENTIALS: " + err.Error())
+	maybeFilename := maybeCreds
+	if maybeCreds[0] == '~' {
+		var err error
+		maybeFilename, err = homedir.Expand(maybeCreds)
+		if err != nil {
+			t.Fatal("Error reading GOOGLE_CREDENTIALS: " + err.Error())
+		}
 	}
 
-	return string(contents), project
+	if _, err := os.Stat(maybeFilename); err == nil {
+		contents, err := ioutil.ReadFile(maybeFilename)
+		if err != nil {
+			t.Fatal("Error reading GOOGLE_CREDENTIALS: " + err.Error())
+		}
+		maybeCreds = string(contents)
+	}
+
+	return maybeCreds, project
 }
 
 func getTestRMQCreds(t *testing.T) (string, string, string) {
@@ -151,13 +170,13 @@ echo "helper-token"
 `
 
 func TestAccAuthLoginProviderConfigure(t *testing.T) {
-	rootProvider := Provider().(*schema.Provider)
+	rootProvider := Provider()
 	rootProviderResource := &schema.Resource{
 		Schema: rootProvider.Schema,
 	}
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() { testAccPreCheck(t) },
-		Providers: map[string]terraform.ResourceProvider{
+		Providers: map[string]*schema.Provider{
 			"vault": rootProvider,
 		},
 		Steps: []resource.TestStep{
@@ -175,7 +194,7 @@ func TestAccAuthLoginProviderConfigure(t *testing.T) {
 }
 
 func TestTokenReadProviderConfigureWithHeaders(t *testing.T) {
-	rootProvider := Provider().(*schema.Provider)
+	rootProvider := Provider()
 
 	rootProviderResource := &schema.Resource{
 		Schema: rootProvider.Schema,
@@ -203,7 +222,7 @@ func TestAccNamespaceProviderConfigure(t *testing.T) {
 		t.Skip("TF_ACC_ENTERPRISE is not set, test is applicable only for Enterprise version of Vault")
 	}
 
-	rootProvider := Provider().(*schema.Provider)
+	rootProvider := Provider()
 	rootProviderResource := &schema.Resource{
 		Schema: rootProvider.Schema,
 	}
@@ -217,7 +236,7 @@ func TestAccNamespaceProviderConfigure(t *testing.T) {
 	//Create a test namespace and make sure it stays there
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() { testAccPreCheck(t) },
-		Providers: map[string]terraform.ResourceProvider{
+		Providers: map[string]*schema.Provider{
 			"vault": rootProvider,
 		},
 		Steps: []resource.TestStep{
@@ -228,7 +247,7 @@ func TestAccNamespaceProviderConfigure(t *testing.T) {
 		},
 	})
 
-	nsProvider := Provider().(*schema.Provider)
+	nsProvider := Provider()
 	nsProviderResource := &schema.Resource{
 		Schema: nsProvider.Schema,
 	}
@@ -242,7 +261,7 @@ func TestAccNamespaceProviderConfigure(t *testing.T) {
 	// Create a policy with sudo permissions and an orphaned periodic token within the test namespace
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() { testAccPreCheck(t) },
-		Providers: map[string]terraform.ResourceProvider{
+		Providers: map[string]*schema.Provider{
 			"vault": nsProvider,
 		},
 		Steps: []resource.TestStep{
@@ -272,7 +291,7 @@ EOT
 resource "vault_approle_auth_backend_role" "admin" {
     backend = vault_auth_backend.approle.path
 	role_name = "admin"
-	policies = [vault_policy.admin.name]
+	token_policies = [vault_policy.admin.name]
 }
 
 resource "vault_approle_auth_backend_role_secret_id" "admin" {
@@ -316,7 +335,7 @@ func testResourceApproleLoginCheckAttrs(t *testing.T) resource.TestCheckFunc {
 				},
 			},
 		}
-		approleProvider := Provider().(*schema.Provider)
+		approleProvider := Provider()
 		approleProviderResource := &schema.Resource{
 			Schema: approleProvider.Schema,
 		}
@@ -340,7 +359,7 @@ EOT
 }
 
 resource "vault_token" "test" {
-	policies = [ "${vault_policy.test.name}" ]
+	policies = [ vault_policy.test.name ]
 	ttl = "60s"
 }`
 }
@@ -372,7 +391,7 @@ func testResourceAdminPeriodicOrphanTokenCheckAttrs(namespacePath string, t *tes
 
 		vaultToken := tokenResourceState.Primary.Attributes["client_token"]
 
-		ns2Provider := Provider().(*schema.Provider)
+		ns2Provider := Provider()
 		ns2ProviderResource := &schema.Resource{
 			Schema: ns2Provider.Schema,
 		}
@@ -388,7 +407,7 @@ func testResourceAdminPeriodicOrphanTokenCheckAttrs(namespacePath string, t *tes
 		//Finally test that you can do stuff with the new token by creating a sub namespace
 		resource.Test(t, resource.TestCase{
 			PreCheck: func() { testAccPreCheck(t) },
-			Providers: map[string]terraform.ResourceProvider{
+			Providers: map[string]*schema.Provider{
 				"vault": ns2Provider,
 			},
 			Steps: []resource.TestStep{
@@ -446,7 +465,7 @@ func TestAccProviderToken(t *testing.T) {
 	}
 
 	// Create a "resource" we can use for constructing ResourceData.
-	provider := Provider().(*schema.Provider)
+	provider := Provider()
 	providerResource := &schema.Resource{
 		Schema: provider.Schema,
 	}
@@ -611,7 +630,7 @@ func testHeaderConfig(headerName, headerValue string) string {
 	providerConfig := fmt.Sprintf(`
 	provider "vault" {
 		headers {
-			name  = "%s" 
+			name  = "%s"
 			value = "%s"
 		}
 		token_name = "testtoken"
@@ -694,7 +713,7 @@ func TestAccProviderVaultAddrEnv(t *testing.T) {
 
 	// clear BASH_ENV for this test so any cmd.Exec invocations do not source the BASH_ENV
 	// file which is configured with a VAULT_ADDR here:
-	// https://github.com/terraform-providers/terraform-provider-vault/blob/f42716aae3aebc8daf9702dfa20ce3f8d09d9f4d/.circleci/config.yml#L27
+	// https://github.com/hashicorp/terraform-provider-vault/blob/f42716aae3aebc8daf9702dfa20ce3f8d09d9f4d/.circleci/config.yml#L27
 	// All values set in that BASH_ENV file will still be in the process environment of this
 	// test, they just won't clobber any values this test modifies in the process environment
 	// when the ExternalTokenHelper's command is formatted into a shell invocation to exec here:
@@ -772,7 +791,7 @@ func TestAccProviderVaultAddrEnv(t *testing.T) {
 
 func newTestResourceData(address string, addAddressToEnv string) (*schema.ResourceData, error) {
 	// Create a "resource" we can use for constructing ResourceData.
-	provider := Provider().(*schema.Provider)
+	provider := Provider()
 	providerResource := &schema.Resource{
 		Schema: provider.Schema,
 		// this needs to be configured with and without add_Address_to_env

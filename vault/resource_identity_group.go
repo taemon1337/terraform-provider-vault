@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-provider-vault/util"
 	"github.com/hashicorp/vault/api"
-	"github.com/terraform-providers/terraform-provider-vault/util"
 )
 
 const identityGroupPath = "/identity/group"
@@ -86,7 +86,6 @@ func identityGroupResource() *schema.Resource {
 			"member_entity_ids": {
 				Type:     schema.TypeSet,
 				Optional: true,
-				Computed: true,
 				Elem: &schema.Schema{
 					Type: schema.TypeString,
 				},
@@ -94,33 +93,67 @@ func identityGroupResource() *schema.Resource {
 				// Suppress the diff if group type is "external" because we cannot manage
 				// group members
 				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-					if d.Get("type").(string) == "external" {
+					if d.Get("type").(string) == "external" || d.Get("external_member_entity_ids").(bool) == true {
 						return true
 					}
 					return false
 				},
 			},
+
+			"external_member_entity_ids": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "Manage member entities externally through `vault_identity_group_policies_member_entity_ids`",
+			},
 		},
 	}
 }
 
-func identityGroupUpdateFields(d *schema.ResourceData, data map[string]interface{}) error {
-	if name, ok := d.GetOk("name"); ok {
-		data["name"] = name
-	}
+func identityGroupUpdateFields(d *schema.ResourceData, data map[string]interface{}, create bool) error {
+	if create {
+		if name, ok := d.GetOk("name"); ok {
+			data["name"] = name
+		}
 
-	if externalPolicies, ok := d.GetOk("external_policies"); !(ok && externalPolicies.(bool)) {
-		data["policies"] = d.Get("policies").(*schema.Set).List()
-	}
+		if externalPolicies, ok := d.GetOk("external_policies"); !(ok && externalPolicies.(bool)) {
+			data["policies"] = d.Get("policies").(*schema.Set).List()
+		}
 
-	// Member groups and entities can't be set for external groups
-	if d.Get("type").(string) == "internal" {
-		data["member_group_ids"] = d.Get("member_group_ids").(*schema.Set).List()
-		data["member_entity_ids"] = d.Get("member_entity_ids").(*schema.Set).List()
-	}
+		// Member groups and entities can't be set for external groups
+		if d.Get("type").(string) == "internal" {
+			data["member_group_ids"] = d.Get("member_group_ids").(*schema.Set).List()
 
-	if metadata, ok := d.GetOk("metadata"); ok {
-		data["metadata"] = metadata
+			if externalMemberEntityIds, ok := d.GetOk("external_member_entity_ids"); !(ok && externalMemberEntityIds.(bool)) {
+				data["member_entity_ids"] = d.Get("member_entity_ids").(*schema.Set).List()
+			}
+		}
+
+		if metadata, ok := d.GetOk("metadata"); ok {
+			data["metadata"] = metadata
+		}
+	} else {
+		if d.HasChanges("name", "external_policies", "policies", "metadata", "member_entity_ids", "member_group_ids") {
+			data["name"] = d.Get("name")
+			data["metadata"] = d.Get("metadata")
+			data["policies"] = d.Get("policies").(*schema.Set).List()
+			// Member groups and entities can't be set for external groups
+			if d.Get("type").(string) == "internal" {
+				data["member_entity_ids"] = d.Get("member_entity_ids").(*schema.Set).List()
+				data["member_group_ids"] = d.Get("member_group_ids").(*schema.Set).List()
+			}
+			// Edge case where if external_policies is true, no policies
+			// should be configured on the entity.
+			data["external_policies"] = d.Get("external_policies").(bool)
+			if data["external_policies"].(bool) {
+				data["policies"] = nil
+			}
+			// if external_member_entity_ids is true, member_entity_ids will be nil
+			data["external_member_entity_ids"] = d.Get("external_member_entity_ids").(bool)
+			if data["external_member_entity_ids"].(bool) {
+				data["member_entity_ids"] = nil
+			}
+		}
 	}
 
 	return nil
@@ -135,11 +168,10 @@ func identityGroupCreate(d *schema.ResourceData, meta interface{}) error {
 	path := identityGroupPath
 
 	data := map[string]interface{}{
-		"name": name,
 		"type": typeValue,
 	}
 
-	if err := identityGroupUpdateFields(d, data); err != nil {
+	if err := identityGroupUpdateFields(d, data, true); err != nil {
 		return fmt.Errorf("error writing IdentityGroup to %q: %s", name, err)
 	}
 
@@ -148,7 +180,19 @@ func identityGroupCreate(d *schema.ResourceData, meta interface{}) error {
 	if err != nil {
 		return fmt.Errorf("error writing IdentityGroup to %q: %s", name, err)
 	}
-	log.Printf("[DEBUG] Wrote IdentityGroup %q", name)
+
+	if resp == nil {
+		path := identityGroupNamePath(name)
+		groupMsg := "Unable to determine group id."
+
+		if group, err := client.Logical().Read(path); err == nil {
+			groupMsg = fmt.Sprintf("Group resource ID %q may be imported.", group.Data["id"])
+		}
+
+		return fmt.Errorf("Identity Group %q already exists. %s", name, groupMsg)
+	} else {
+		log.Printf("[DEBUG] Wrote IdentityGroup %q", resp.Data["name"])
+	}
 
 	d.SetId(resp.Data["id"].(string))
 
@@ -167,7 +211,7 @@ func identityGroupUpdate(d *schema.ResourceData, meta interface{}) error {
 
 	data := map[string]interface{}{}
 
-	if err := identityGroupUpdateFields(d, data); err != nil {
+	if err := identityGroupUpdateFields(d, data, false); err != nil {
 		return fmt.Errorf("error updating IdentityGroup %q: %s", id, err)
 	}
 
@@ -249,6 +293,10 @@ func identityGroupExists(d *schema.ResourceData, meta interface{}) (bool, error)
 	return resp != nil, nil
 }
 
+func identityGroupNamePath(name string) string {
+	return fmt.Sprintf("%s/name/%s", identityGroupPath, name)
+}
+
 func identityGroupIDPath(id string) string {
 	return fmt.Sprintf("%s/id/%s", identityGroupPath, id)
 }
@@ -263,6 +311,21 @@ func readIdentityGroupPolicies(client *api.Client, groupID string) ([]interface{
 	}
 
 	if v, ok := resp.Data["policies"]; ok && v != nil {
+		return v.([]interface{}), nil
+	}
+	return make([]interface{}, 0), nil
+}
+
+func readIdentityGroupMemberEntityIds(client *api.Client, groupID string) ([]interface{}, error) {
+	resp, err := readIdentityGroup(client, groupID)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("error IdentityGroup %s does not exist", groupID)
+	}
+
+	if v, ok := resp.Data["member_entity_ids"]; ok && v != nil {
 		return v.([]interface{}), nil
 	}
 	return make([]interface{}, 0), nil
